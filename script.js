@@ -109,19 +109,31 @@ async function promptUserMessage(session, userMessage, generation) {
 
     const startedAt = performance.now()
     const { contextUsage: usageBefore } = llmSession
-    const result = await llmSession.prompt(userMessage.text, { signal: generation.controller.signal })
+    const assistantMessage = await putMessage(session, { by: 'assistant', text: '' })
+    if (!assistantMessage) return
+    assistantMessage.generation = generation
+
+    const stream = llmSession.promptStreaming(userMessage.text, { signal: generation.controller.signal })
+    updateSessionUi(session)
+
+    for await (const chunk of stream) {
+      if (generation.controller.signal.aborted) throwAbortError()
+      assistantMessage.text += chunk
+      generation.render(assistantMessage.text)
+    }
+
     const durationMs = performance.now() - startedAt
     const { contextUsage, contextWindow } = llmSession
 
     if (generation.controller.signal.aborted) return
+    delete assistantMessage.generation
 
     Object.assign(session, { contextUsage, contextWindow })
-    await putMessage(session, {
-      by: 'assistant',
-      text: result,
+    Object.assign(assistantMessage, {
       durationMs,
       tokenUsage: Math.max(contextUsage - usageBefore, 0),
     })
+    await putMessage(session, assistantMessage)
   } catch (error) {
     if (isAbortError(error) && !generation.suppressAbortMessage) {
       await putMessage(session, { by: 'assistant', text: 'Response stopped.' })
@@ -323,8 +335,19 @@ function renderChat() {
   chat.innerHTML = ''
 
   for (const message of activeSession?.messages ?? []) {
-    output(message)
-    if (message.generation) outputLoading()
+    if (message.by === 'assistant' && message.generation) {
+      const p = outputLoading()
+      message.generation.render = text => {
+        if (p) {
+          const adjustScroll = chat.scrollTop === chat.scrollHeight - chat.clientHeight
+          p.textContent = text
+          if (adjustScroll) chat.scrollTop = chat.scrollHeight
+        }
+      }
+    }
+    else {
+      output(message)
+    }
   }
 
   renderOverallUsage()
@@ -396,6 +419,7 @@ function outputLoading() {
   chat.append(p)
 
   chat.scrollTop = chat.scrollHeight
+  return p
 }
 
 function formatMessageUsage(message) {
