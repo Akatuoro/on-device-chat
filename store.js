@@ -79,8 +79,15 @@ function save(db, storeName, content) {
     const store = transaction.objectStore(storeName);
 
     content.createdAt ??= new Date().toISOString();
-    const request = store.add(content);
-    request.onsuccess = () => resolve(content);
+    content.updatedAt = new Date().toISOString();
+
+    const request = store.put(content);
+    request.onsuccess = () => {
+      resolve({
+        ...content,
+        id: request.result
+      });
+    };
     request.onerror = () => reject(request.error);
   });
 }
