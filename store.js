@@ -101,14 +101,7 @@ function getAll(db, storeName, indexName, id) {
 
     const request = index.getAll(id);
 
-    request.onsuccess = () => {
-      const messages = request.result.sort(
-        (a, b) => new Date(a.createdAt) - new Date(b.createdAt)
-      );
-
-      resolve(messages);
-    };
-
+    request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
 
   });

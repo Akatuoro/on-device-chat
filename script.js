@@ -1,164 +1,334 @@
 const app = document.getElementById('app')
 const chat = document.getElementById('chat')
 const form = document.getElementById('input')
-const message = document.getElementById('message')
+const messageIn = document.getElementById('message')
 const sessionsEl = document.getElementById('sessions')
 const newSessionButton = document.getElementById('new-session')
 const usageEl = document.getElementById('usage')
+const sendButton = document.getElementById('send-message')
+const abortButton = document.getElementById('abort-message')
 
-const chromeVersion = getChromeVersion()
 const NEW_CHAT_NAME = 'New chat'
 const WELCOME_MESSAGE = 'Hi There!'
 
 let sessions = []
 let activeSession = null
-let llmSession = null
 let initialized = initialize()
 
-newSessionButton.addEventListener('click', async () => {
-  await createSession()
-})
+// ==========================
+// === Register UI Events ===
+// ==========================
+
+newSessionButton.addEventListener('click', newSession)
+
+messageIn.addEventListener('input', updateInputControls)
 
 form.addEventListener('submit', async event => {
   event.preventDefault()
 
-  const text = message.value.trim()
+  const text = messageIn.value.trim()
   if (!text) return
 
-  message.value = ''
+  messageIn.value = ''
+  await sendPrompt(text)
+})
 
-  await addMessage('user', text)
+abortButton.addEventListener('click', () => {
+  getPendingMessage(activeSession)?.generation.controller.abort()
+})
 
-  await initialized
 
-  if (!llmSession) {
-    await addMessage('assistant', 'No language model session available.')
-    return
+// =====================
+// === Session Logic ===
+// =====================
+
+async function initialize() {
+  const outputErr = (text) => {
+    const chromeVersion = getChromeVersion()
+    if (!chromeVersion || chromeVersion < 148) text += ' - Chrome 148 is required.'
+    output({ by: 'assistant', text })
   }
 
-  const loading = showLoading()
-  const { contextUsage : usageBefore } = llmSession
-  const startedAt = performance.now()
+  if (!window.LanguageModel) {
+    return outputErr('LanguageModel API not available')
+  }
+  const availability = await LanguageModel.availability({
+    expectedInputs: [{ type: 'text', languages: ['en'] }],
+    expectedOutputs: [{ type: 'text', languages: ['en'] }],
+  })
+  if (availability !== 'available') {
+    return outputErr('No on-device language model available, status: ' + availability)
+  }
+
+
+  await store.open()
+  const sessionRecords = await store.getSessions()
+  sessionRecords.sort((a, b) => b.createdAt - a.createdAt) // desc
+  sessions = await Promise.all(sessionRecords.map(loadSession))
+
+  await newSession()
+}
+
+
+async function sendPrompt(text, session = activeSession) {
+  await initialized
+
+  if (!session) return
+  const pending = getPendingMessage(session)
+  if (pending) {
+    pending.generation.suppressAbortMessage = true
+    pending.generation.controller.abort()
+    await pending.generation.done
+  }
+  const message = await putMessage(session, { by: 'user', text })
+  if (!message) return
+
+  const generation = {
+    controller: new AbortController(),
+    suppressAbortMessage: false,
+  }
+
+  message.generation = generation
+  generation.done = promptUserMessage(session, message, generation)
+  updateSessionUi(session)
+
+  await generation.done
+}
+
+async function promptUserMessage(session, userMessage, generation) {
 
   try {
-    const result = await llmSession.prompt(text)
+    const llmSession = await ensureLanguageModelSession(session)
+
+    if (!llmSession) {
+      await putMessage(session, { by: 'assistant', text: 'No language model session available.' })
+      return
+    }
+
+    if (generation.controller.signal.aborted) return
+
+    const startedAt = performance.now()
+    const { contextUsage: usageBefore } = llmSession
+    const result = await llmSession.prompt(userMessage.text, { signal: generation.controller.signal })
     const durationMs = performance.now() - startedAt
     const { contextUsage, contextWindow } = llmSession
-    Object.assign(activeSession.metadata, { contextUsage, contextWindow })
 
-    loading.remove()
-    await addMessage('assistant', result, {
+    if (generation.controller.signal.aborted) return
+
+    Object.assign(session, { contextUsage, contextWindow })
+    await putMessage(session, {
+      by: 'assistant',
+      text: result,
       durationMs,
       tokenUsage: Math.max(contextUsage - usageBefore, 0),
     })
   } catch (error) {
-    loading.remove()
-    await addMessage('assistant', 'Something went wrong.')
-    console.error(error)
+    if (isAbortError(error) && !generation.suppressAbortMessage) {
+      await putMessage(session, { by: 'assistant', text: 'Response stopped.' })
+    } else {
+      await putMessage(session, { by: 'assistant', text: 'Something went wrong.' })
+      console.error(error)
+    }
+  } finally {
+    if (userMessage.generation === generation) delete userMessage.generation
+    updateSessionUi(session)
   }
-})
+}
 
-async function createSession() {
-  const existing = await findReusableNewSession()
+
+async function ensureLanguageModelSession(session) {
+  if (!window.LanguageModel) return null
+  if (!session.llmSession) session.llmSession = await LanguageModel.create(createSessionData(session))
+  return session.llmSession
+}
+
+function createSessionData(session) {
+  return {
+    initialPrompts: session.messages
+      .filter(message => !message.generation)
+      .filter(message => message.by === 'user' || (message.by === 'assistant' && !message.transient))
+      .map(message => ({
+        role: message.by,
+        content: message.text,
+      })),
+  }
+}
+
+function getPendingMessage(session) {
+  return session?.messages.find(message => message.generation) ?? null
+}
+
+function releaseIdleLanguageModelSessions(keepSession) {
+  for (const session of sessions) {
+    if (session === keepSession || getPendingMessage(session) || !session.llmSession) continue
+
+    session.llmSession.destroy?.()
+    session.llmSession = null
+  }
+}
+
+function isAbortError(error) {
+  return error?.name === 'AbortError'
+    || (typeof DOMException !== 'undefined' && error?.code === DOMException.ABORT_ERR)
+}
+
+function updateSessionUi(session) {
+  if (session?.deleted) return
+
+  if (activeSession === session) renderChat()
+  renderSessions()
+}
+
+function updateInputControls() {
+  const isSending = Boolean(getPendingMessage(activeSession))
+
+  sendButton.disabled = !messageIn.value.trim()
+  sendButton.hidden = isSending
+  abortButton.hidden = !isSending
+}
+
+async function newSession() {
+  const existing = sessions.find(session => session.name === NEW_CHAT_NAME)
 
   if (existing) {
-    await setActiveSession(existing)
+    setActiveSession(existing)
     return existing
   }
 
-  const newSession = {
+  const session = {
     id: crypto.randomUUID(),
     name: NEW_CHAT_NAME,
     createdAt: Date.now(),
+    persisted: false,
+    messages: [],
+    llmSession: null,
   }
 
-  sessions.unshift(newSession)
-  await store.saveSession(newSession)
-  await setActiveSession(newSession)
-  await addMessage('assistant', WELCOME_MESSAGE)
+  sessions.unshift(session)
+  setActiveSession(session)
+  addWelcomeMessage(session)
 
-  return newSession
+  await ensureLanguageModelSession(session)
+  renderOverallUsage()
+  return session
 }
 
-async function findReusableNewSession() {
-  let reusableSession = null
 
-  for (const session of sessions) {
-    if (session.name !== NEW_CHAT_NAME) continue
+async function deleteSession(session) {
+  session.deleted = true
+  getPendingMessage(session)?.generation.controller.abort()
+  session.llmSession?.destroy?.()
 
-    const messages = await store.getMessages(session.id)
-    const userMessages = messages.filter(message => message.by === 'user')
-
-    if (userMessages.length > 0) continue
-
-    if (!reusableSession) {
-      reusableSession = session
-      continue
-    }
-
+  if (session.persisted) {
     await store.deleteSession(session.id)
-    sessions = sessions.filter(item => item.id !== session.id)
   }
 
-  return reusableSession
+  sessions = sessions.filter(item => item.id !== session.id)
+
+  if (activeSession?.id === session.id) {
+    activeSession = null
+  }
+
+  if (sessions.length === 0) {
+    await newSession()
+    return
+  }
+
+  await setActiveSession(sessions[0])
 }
 
-async function setActiveSession(sessionMeta) {
-  const messages = await store.getMessages(sessionMeta.id)
 
-  messages.sort((a, b) => a.createdAt - b.createdAt)
-
-  activeSession = {
-    metadata: sessionMeta,
-    messages,
-  }
+function setActiveSession(session) {
+  activeSession = sessions.find(item => item.id === session.id) ?? session
 
   renderSessions()
   renderChat()
 }
 
-async function addMessage(by, text, metadata = {}) {
-  if (!activeSession) return
+function addWelcomeMessage(session) {
+  session.messages.push({
+    id: crypto.randomUUID(),
+    sessionId: session.id,
+    by: 'assistant',
+    text: WELCOME_MESSAGE,
+    createdAt: Date.now(),
+    transient: true,
+  })
+
+  updateSessionUi(session)
+}
+
+async function putMessage(session, data, updates = {}) {
+  if (!session || session.deleted) return null
 
   const message = {
-    id: crypto.randomUUID(),
-    sessionId: activeSession.metadata.id,
-    by,
-    text,
+    id: data.id ?? crypto.randomUUID(),
+    sessionId: session.id,
     createdAt: Date.now(),
-    ...metadata,
+    ...data,
+    ...updates,
   }
 
+  if (!data.id) session.messages.push(message)
+
+  if (data.by === 'user') {
+    await updateSessionName(session)
+  }
+
+  await saveSession(session)
   await store.saveMessage(message)
-  activeSession.messages.push(message)
+  updateSessionUi(session)
 
-  if (by === 'user' && activeSession.metadata.name === NEW_CHAT_NAME) {
-    activeSession.metadata.name = text.slice(0, 24) || NEW_CHAT_NAME
-    activeSession.metadata.updatedAt = Date.now()
-
-    await store.saveSession(activeSession.metadata)
-
-    sessions = await store.getSessions()
-    activeSession.metadata = sessions.find(session => session.id === activeSession.metadata.id) ?? activeSession.metadata
-  }
-
-  renderSessions()
-  renderChat()
+  return message
 }
+
+async function updateSessionName(session) {
+  const firstUserMessage = session.messages.find(message => message.by === 'user')
+  const nextName = firstUserMessage?.text.slice(0, 24) || NEW_CHAT_NAME
+
+  if (session.name === nextName) return
+
+  session.name = nextName
+  session.updatedAt = Date.now()
+}
+
+async function saveSession(session) {
+  await store.saveSession(sessionRecord(session))
+  session.persisted = true
+}
+
+function sessionRecord(session) {
+  const { id, name, createdAt, updatedAt, contextUsage, contextWindow } = session
+  return { id, name, createdAt, updatedAt, contextUsage, contextWindow }
+}
+
+async function loadSession(sessionMeta) {
+  const messages = await store.getMessages(sessionMeta.id)
+  messages.sort((a, b) => a.createdAt - b.createdAt) // asc
+
+  return {
+    ...sessionMeta,
+    persisted: true,
+    messages,
+    llmSession: null,
+  }
+}
+
+
+// ====================
+// === UI Rendering ===
+// ====================
 
 function renderChat() {
   chat.innerHTML = ''
 
-  if (!activeSession) {
-    renderOverallUsage()
-    return
-  }
-
-  for (const message of activeSession.messages) {
+  for (const message of activeSession?.messages ?? []) {
     output(message)
+    if (message.generation) outputLoading()
   }
 
   renderOverallUsage()
+  updateInputControls()
 }
 
 function renderSessions() {
@@ -168,7 +338,7 @@ function renderSessions() {
     const row = document.createElement('div')
     row.className = 'session'
 
-    if (session.id === activeSession?.metadata.id) {
+    if (session.id === activeSession?.id) {
       row.classList.add('active')
     }
 
@@ -187,21 +357,7 @@ function renderSessions() {
 
     deleteButton.addEventListener('click', async event => {
       event.stopPropagation()
-
-      await store.deleteSession(session.id)
-
-      sessions = sessions.filter(item => item.id !== session.id)
-
-      if (activeSession?.metadata.id === session.id) {
-        activeSession = null
-      }
-
-      if (sessions.length === 0) {
-        await createSession()
-        return
-      }
-
-      await setActiveSession(sessions[0])
+      await deleteSession(session)
     })
 
     row.append(name, deleteButton)
@@ -209,42 +365,6 @@ function renderSessions() {
   }
 }
 
-async function checkAvailability() {
-  if (!window.LanguageModel) return false
-
-  const available = await LanguageModel.availability({
-    expectedInputs: [{ type: 'text', languages: ['en'] }],
-    expectedOutputs: [{ type: 'text', languages: ['en'] }],
-  })
-
-  return available !== 'unavailable'
-}
-
-async function initialize() {
-  let available = await checkAvailability()
-
-  if (!available) {
-    output({ text: 'No on-device language model available. Requires Chrome version 148.', by: 'assistant' })
-
-    if (chromeVersion) {
-      output({ text: 'Current Chrome version: ' + chromeVersion, by: 'assistant' })
-    }
-
-    return
-  }
-
-  await store.open()
-  sessions = await store.getSessions()
-
-  if (sessions.length > 0) {
-    await setActiveSession(sessions[0])
-  } else {
-    await createSession()
-  }
-
-  llmSession = await LanguageModel.create()
-  renderOverallUsage()
-}
 
 function output(message) {
   const p = document.createElement('p')
@@ -269,18 +389,14 @@ function output(message) {
   chat.scrollTop = chat.scrollHeight
 }
 
-function showLoading() {
+function outputLoading() {
   const p = document.createElement('p')
   p.className = 'assistant loading'
   p.innerHTML = '<span></span><span></span><span></span>'
   chat.append(p)
 
   chat.scrollTop = chat.scrollHeight
-
-  return p
 }
-
-
 
 function formatMessageUsage(message) {
   const parts = []
@@ -291,6 +407,8 @@ function formatMessageUsage(message) {
 
 function renderOverallUsage() {
   if (!usageEl) return
+
+  const llmSession = activeSession?.llmSession
   if (!llmSession) return usageEl.textContent = ''
 
   const { contextUsage, contextWindow } = llmSession
@@ -305,6 +423,10 @@ function formatDuration(ms) {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+
+// =============
+// === Utils ===
+// =============
 
 function getChromeVersion() {
   const raw = navigator.userAgent.match(/Chrom(e|ium)\/([0-9]+)\./)
