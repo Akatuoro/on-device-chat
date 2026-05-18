@@ -398,6 +398,7 @@ function output(message) {
   p.append(text)
 
   if (message.by === 'assistant') {
+    if (DOMPurify && marked) text.innerHTML = DOMPurify.sanitize(marked.parse(message.text))
     const details = formatMessageUsage(message)
 
     if (details) {

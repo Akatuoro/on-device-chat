@@ -49,6 +49,15 @@ body {
   background: var(--page-bg);
 }
 
+p {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+pre {
+  overflow-x: auto;
+}
+
 #app {
   position: fixed;
   inset: 0;
@@ -262,9 +271,7 @@ button {
   opacity: 0.45;
 }
 
-.icon-button {
-  width: 32px;
-  height: 28px;
+button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -273,6 +280,11 @@ button {
   background: var(--button-bg);
   color: var(--button-color);
   cursor: pointer;
+}
+
+.icon-button {
+  width: 32px;
+  height: 28px;
 }
 
 .icon-button:hover:not(:disabled) {
