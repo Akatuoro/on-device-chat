@@ -10,6 +10,7 @@ const abortButton = document.getElementById('abort-message')
 
 const NEW_CHAT_NAME = 'New chat'
 const WELCOME_MESSAGE = 'Hi There!'
+const SYSTEM_PROMPT = 'Limited context window. Keep it short and concise unless asked.'
 
 let sessions = []
 let activeSession = null
@@ -155,15 +156,15 @@ async function ensureLanguageModelSession(session) {
 }
 
 function createSessionData(session) {
-  return {
-    initialPrompts: session.messages
-      .filter(message => !message.generation)
-      .filter(message => message.by === 'user' || (message.by === 'assistant' && !message.transient))
-      .map(message => ({
-        role: message.by,
-        content: message.text,
-      })),
-  }
+  const initialPrompts = session.messages
+    .filter(message => !message.generation)
+    .filter(message => message.by === 'user' || (message.by === 'assistant' && !message.transient))
+    .map(message => ({
+      role: message.by,
+      content: message.text,
+    }))
+  initialPrompts.unshift({ role: 'system', content: SYSTEM_PROMPT })
+  return { initialPrompts }
 }
 
 function getPendingMessage(session) {
