@@ -1,6 +1,52 @@
+:root {
+  color-scheme: dark;
+  --page-bg: #111;
+  --app-color: #fff;
+  --panel-border: rgba(255, 255, 255, 0.3);
+  --session-hover-bg: rgba(255, 255, 255, 0.12);
+  --session-active-bg: rgba(255, 255, 255, 0.22);
+  --button-border: rgba(255, 255, 255, 0.35);
+  --button-bg: rgba(255, 255, 255, 0.12);
+  --button-hover-bg: rgba(255, 255, 255, 0.2);
+  --button-color: #fff;
+  --input-bg: #1d1d1d;
+  --input-border: rgba(255, 255, 255, 0.35);
+  --input-color: #fff;
+  --input-placeholder: rgba(255, 255, 255, 0.5);
+  --user-message-bg: #669933;
+  --user-message-color: #fff;
+  --assistant-message-bg: rebeccapurple;
+  --assistant-message-color: #fff;
+  --loading-dot-bg: #fff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --page-bg: #fdfdfd;
+    --app-color: #1f2933;
+    --panel-border: rgba(31, 41, 51, 0.22);
+    --session-hover-bg: rgba(31, 41, 51, 0.08);
+    --session-active-bg: rgba(31, 41, 51, 0.14);
+    --button-border: rgba(31, 41, 51, 0.25);
+    --button-bg: rgba(255, 255, 255, 0.78);
+    --button-hover-bg: rgba(255, 255, 255, 0.98);
+    --button-color: #1f2933;
+    --input-bg: rgba(255, 255, 255, 0.92);
+    --input-border: rgba(31, 41, 51, 0.25);
+    --input-color: #1f2933;
+    --input-placeholder: rgba(31, 41, 51, 0.48);
+    --user-message-bg: #dbeafe;
+    --user-message-color: #12355b;
+    --assistant-message-bg: #f4e8ff;
+    --assistant-message-color: #3f1f5f;
+    --loading-dot-bg: #3f1f5f;
+  }
+}
+
 body {
   margin: 0;
-  background: #111;
+  background: var(--page-bg);
 }
 
 #app {
@@ -11,7 +57,7 @@ body {
   height: 420px;
   font-family: monospace;
   opacity: 0.9;
-  color: white;
+  color: var(--app-color);
   padding: 8px;
   border-radius: 4px;
   display: flex;
@@ -24,7 +70,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  border-right: 1px solid rgba(255, 255, 255, 0.3);
+  border-right: 1px solid var(--panel-border);
   padding-right: 8px;
 }
 
@@ -56,11 +102,11 @@ body {
 }
 
 .session:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--session-hover-bg);
 }
 
 .session.active {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--session-active-bg);
 }
 
 .session-name {
@@ -73,7 +119,7 @@ body {
   opacity: 0;
   border: 0;
   background: transparent;
-  color: white;
+  color: var(--button-color);
   cursor: pointer;
   font-family: monospace;
 }
@@ -114,6 +160,14 @@ body {
   flex: 1;
   min-width: 0;
   font-family: monospace;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--input-color);
+}
+
+#message::placeholder {
+  color: var(--input-placeholder);
 }
 
 
@@ -136,12 +190,14 @@ body {
 
 .user {
   align-self: flex-end;
-  background: #669933;
+  background: var(--user-message-bg);
+  color: var(--user-message-color);
 }
 
 .assistant {
   align-self: flex-start;
-  background: rebeccapurple;
+  background: var(--assistant-message-bg);
+  color: var(--assistant-message-color);
 }
 
 #input {
@@ -168,7 +224,7 @@ button {
 .loading span {
   width: 5px;
   height: 5px;
-  background: white;
+  background: var(--loading-dot-bg);
   border-radius: 999px;
   animation: blink 1s infinite;
 }
@@ -212,15 +268,15 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--button-border);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.12);
-  color: white;
+  background: var(--button-bg);
+  color: var(--button-color);
   cursor: pointer;
 }
 
 .icon-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--button-hover-bg);
 }
 
 .icon-button:disabled {
@@ -235,11 +291,7 @@ button {
 }
 
 .abort-button {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.abort-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--button-bg);
 }
 
 .icon-button[hidden] {
